@@ -1,0 +1,11 @@
+.env
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+htmlcov/
+ai_job_venv/
+node_modules/
+web/node_modules/

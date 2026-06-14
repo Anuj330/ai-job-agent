@@ -1,0 +1,1 @@
+"""Cover letter management module."""

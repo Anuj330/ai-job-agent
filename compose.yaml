@@ -1,0 +1,94 @@
+services:
+  api:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+    environment:
+      BACKEND_INTERNAL_URL: http://api:8000/api/v1
+      NEXT_PUBLIC_API_BASE_URL: http://api:8000/api/v1
+    command: npm run start -- --hostname 0.0.0.0 --port 3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    # Start Xvfb directly instead of xvfb-run: its SIGUSR1 readiness handshake
+    # can be missed, leaving the wrapper blocked forever and celery never started.
+    command: >
+      sh -c "mkdir -p /tmp/.X11-unix &&
+             Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
+             i=0; until [ -e /tmp/.X11-unix/X99 ] || [ $$i -ge 60 ]; do i=$$((i+1)); sleep 0.5; done;
+             DISPLAY=:99 exec celery -A app.core.celery_app.celery_app worker --loglevel=INFO"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  beat:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    command: celery -A app.core.celery_app.celery_app beat --loglevel=INFO --schedule /tmp/celerybeat-schedule
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: ai_job_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_job_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
